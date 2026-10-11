@@ -1,0 +1,12 @@
+{
+  "name": "jarvis-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jarvis: Telegram-бот на Gemini для магазина на Uzum Market",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@breezystack/lamejs": "^1.2.7"
+  }
+}
