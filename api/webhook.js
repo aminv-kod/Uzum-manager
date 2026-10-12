@@ -7,6 +7,7 @@ const { runAgent } = require('../lib/gemini');
 const { declarations, makeHandlers } = require('../lib/tools');
 const { synthesize } = require('../lib/tts');
 const { draftSupplierReply } = require('../lib/reply');
+const uzum = require('../lib/uzum');
 
 const OWNER_ID = process.env.OWNER_ID;
 const SECRET = process.env.WEBHOOK_SECRET;
@@ -26,7 +27,9 @@ function buildSystemPrompt(suppliers) {
 Правила:
 - Отвечай на языке владельца (русский, узбекский или английский). Пиши коротко и по делу, как в мессенджере.
 - Если не знаешь или не уверен, так и скажи. Ничего не выдумывай, особенно цифры и данные магазина.
-- Данных магазина Uzum (заказы, остатки, продажи) у тебя пока нет. Если спрашивают, честно скажи, что эта функция ещё подключается.
+- Данные магазина на Uzum (продажи, заказы, остатки, расходы) бери только из инструментов uzum_*. Цифры никогда не считай и не угадывай сам: пересказывай то, что вернул инструмент. Если инструмент вернул ошибку, скажи об этом как есть.
+- Данных покупателей (имя, телефон, адрес) у тебя нет. Менять заказы, остатки и цены в Uzum ты не можешь: только читать.
+- Если остаток заканчивается и владелец хочет докупить, предложи заказать у поставщика (draft_supplier_order). Какой товар у какого поставщика, ты не знаешь: спроси.
 
 Заказы поставщикам:
 - Зарегистрированные поставщики (группы в Telegram):
@@ -221,6 +224,8 @@ async function handlePrivateMessage(msg) {
       chatId,
       'Привет, Шахбоз! Я Джарвис. Пиши или отправляй голосовые, на голосовые отвечу голосом.\n\n' +
         'Поставщики: добавь меня в группу и напиши там /supplier Название uz (или ru). Там же /autoreply ask | auto | off задаёт, как я отвечаю поставщику.\n\n' +
+        '/report [дней] — отчёт по магазину (заказы, продажи, расходы, остатки), по умолчанию за 7 дней\n' +
+        '/stock [порог] — что заканчивается на складе\n' +
         '/suppliers — список поставщиков\n/style — мой стиль для ответов поставщикам\n/reset — очистить память диалога'
     );
     return;
@@ -228,6 +233,24 @@ async function handlePrivateMessage(msg) {
   if (text === '/reset') {
     await db.clearHistory(chatId);
     await sendText(chatId, 'Память диалога очищена.');
+    return;
+  }
+  // /report [дней] и /stock [порог]: без модели, цифры считает код
+  const rep = text.match(/^\/report(?:@\w+)?(?:\s+(\d{1,2}))?$/);
+  if (rep) {
+    await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+    await sendText(chatId, await uzum.fullReport({ days: rep[1] ? Number(rep[1]) : 7 }));
+    return;
+  }
+  const stock = text.match(/^\/stock(?:@\w+)?(?:\s+(\d{1,4}))?$/);
+  if (stock) {
+    await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+    try {
+      const l = await uzum.lowStock({ threshold: stock[1] !== undefined ? Number(stock[1]) : Number(process.env.LOW_STOCK_THRESHOLD || 5) });
+      await sendText(chatId, uzum.formatLowStock(l));
+    } catch (e) {
+      await sendText(chatId, `⚠️ ${e.message}`);
+    }
     return;
   }
   if (text === '/suppliers') {
